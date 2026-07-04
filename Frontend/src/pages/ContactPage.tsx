@@ -5,7 +5,7 @@ import { FiMail, FiPhone, FiMapPin } from "react-icons/fi";
 import FridgeMateFooter from "../mycomponents/footer";
 import messageImg from "../assets/new-message.png"; // your messaging PNG
 
-export default function ContactPage(): JSX.Element {
+export default function ContactPage(): React.JSX.Element {
   const [formData, setFormData] = useState({
     first: "",
     last: "",

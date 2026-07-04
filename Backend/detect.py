@@ -6,10 +6,10 @@ _model = None
 
 def load_model(model_path=None):
     if model_path is None:
-        model_path = "/yolov8n.pt"
+        model_path = "yolov8n.pt"
     if not os.path.exists(model_path):
         print("🔽 YOLOv8n model not found — downloading automatically...")
-        model = YOLO("yolov8n.pt", task="detect"))  # YOLO will fetch model
+        model = YOLO("yolov8n.pt", task="detect")  # YOLO will fetch model
     else:
         model = YOLO(model_path)
     return model

@@ -30,7 +30,7 @@ type GalleryItem = {
   error?: string | null;
 };
 
-export default function FridgeMateDashboard(): JSX.Element {
+export default function FridgeMateDashboard(): React.JSX.Element {
   // gallery of processed items
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
   // currently selected item in the right panel
@@ -74,7 +74,8 @@ export default function FridgeMateDashboard(): JSX.Element {
     form.append("file", file);
     
     try {
-      const resp = await fetch("http://localhost:8000/detect_and_generate", {
+      const apiBaseUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+      const resp = await fetch(`${apiBaseUrl}/detect_and_generate`, {
         method: "POST",
         body: form,
     });

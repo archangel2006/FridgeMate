@@ -19,7 +19,7 @@ import carrot from "../assets/carrot.png";
 // STEAM WEBM
 import steam from "../assets/Fumaa.webm";
 
-export default function FridgeMateHome(): JSX.Element {
+export default function FridgeMateHome(): React.JSX.Element {
   const navigate = useNavigate();
 
   return (
