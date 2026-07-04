@@ -1,6 +1,14 @@
 from ultralytics import YOLO
 from collections import Counter
 import os
+import torch
+
+try:
+    from ultralytics.nn.tasks import DetectionModel
+    if hasattr(torch.serialization, "add_safe_globals"):
+        torch.serialization.add_safe_globals([DetectionModel])
+except Exception as e:
+    print("Could not add PyTorch safe globals:", e)
 
 _model = None
 
