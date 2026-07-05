@@ -2,8 +2,18 @@ import os
 os.environ["TORCH_FORCE_WEIGHTS_ONLY_LOAD"] = "0"
 
 import torch
+
+# Monkeypatch torch.load to default weights_only to False for PyTorch 2.6+ compatibility
+original_load = torch.load
+def patched_load(*args, **kwargs):
+    if "weights_only" not in kwargs:
+        kwargs["weights_only"] = False
+    return original_load(*args, **kwargs)
+torch.load = patched_load
+
 from ultralytics import YOLO
 from collections import Counter
+
 
 try:
     from ultralytics.nn.tasks import DetectionModel

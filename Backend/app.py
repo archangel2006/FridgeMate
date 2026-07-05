@@ -1,12 +1,24 @@
+import os
+os.environ["TORCH_FORCE_WEIGHTS_ONLY_LOAD"] = "0"
+
+import torch
+# Monkeypatch torch.load to default weights_only to False for PyTorch 2.6+ compatibility
+original_load = torch.load
+def patched_load(*args, **kwargs):
+    if "weights_only" not in kwargs:
+        kwargs["weights_only"] = False
+    return original_load(*args, **kwargs)
+torch.load = patched_load
+
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
-import os
 import traceback
 import json
 import requests
 from dotenv import load_dotenv
 from detect import detect_ingredients
+
 
 load_dotenv(".env")
 
