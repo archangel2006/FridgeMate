@@ -1,7 +1,9 @@
+import os
+os.environ["TORCH_FORCE_WEIGHTS_ONLY_LOAD"] = "0"
+
+import torch
 from ultralytics import YOLO
 from collections import Counter
-import os
-import torch
 
 try:
     from ultralytics.nn.tasks import DetectionModel
