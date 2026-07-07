@@ -1,36 +1,29 @@
-import os
-os.environ["TORCH_FORCE_WEIGHTS_ONLY_LOAD"] = "0"
-
-import torch
-# Monkeypatch torch.load to default weights_only to False for PyTorch 2.6+ compatibility
-original_load = torch.load
-def patched_load(*args, **kwargs):
-    if "weights_only" not in kwargs:
-        kwargs["weights_only"] = False
-    return original_load(*args, **kwargs)
-torch.load = patched_load
-
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
+import os
 import traceback
 import json
 import requests
 from dotenv import load_dotenv
 from detect import detect_ingredients
 
-
 load_dotenv(".env")
-
-print("🔑 Loaded Key:", os.getenv("GEMINI_API_KEY"))
-
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+# ---- Free Gemini model fallback chain ----
+# If one model's quota is exhausted (429), the next one is tried automatically.
+GEMINI_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+]
 
-app = FastAPI(title="AI Recipe Assistant")
+app = FastAPI(title="FridgeMate AI Recipe Assistant")
 
-# ---- Enable CORS ----
+# ---- CORS: allow all origins (required for Vercel → Render cross-origin calls) ----
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,78 +32,118 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---- Gemini Request Function ----
-def get_gemini_recipe(prompt):
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
-    
+
+def get_gemini_recipe(prompt: str) -> dict:
+    """
+    Try each free Gemini model in order.
+    Falls back to the next model if quota is exceeded (HTTP 429) or the model errors.
+    Raises an Exception only if all models fail.
+    """
+    base_url = "https://generativelanguage.googleapis.com/v1beta/models"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "response_mime_type": "application/json"
         }
     }
-    
-    response = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload)
-    response.raise_for_status()
-    return response.json()
+
+    last_error = None
+    for model_name in GEMINI_MODELS:
+        url = f"{base_url}/{model_name}:generateContent"
+        try:
+            response = requests.post(
+                url,
+                params={"key": GEMINI_API_KEY},
+                json=payload,
+                timeout=60,
+            )
+            if response.status_code == 429:
+                print(f"⚠️  Quota exceeded for {model_name}, trying next model...")
+                last_error = f"Quota exceeded for {model_name}"
+                continue
+            response.raise_for_status()
+            print(f"✅ Used model: {model_name}")
+            return response.json()
+        except requests.exceptions.HTTPError as e:
+            print(f"⚠️  HTTP error with {model_name}: {e}")
+            last_error = str(e)
+            continue
+        except Exception as e:
+            print(f"⚠️  Unexpected error with {model_name}: {e}")
+            last_error = str(e)
+            continue
+
+    raise Exception(f"All Gemini models failed. Last error: {last_error}")
 
 
-def sanitize_response(text):
-    """Clean extra formatting like ```json ... ```"""
+def sanitize_response(text: str) -> str:
+    """Strip markdown code fences from Gemini response."""
     text = text.strip()
     text = text.replace("```json", "").replace("```", "").strip()
-
     return text
 
 
-@app.post("/detect_and_generate")
-async def detect_and_generate(file: UploadFile = File(...)):
-
-    temp_path = f"temp_{file.filename}"
-
-    # Save file temporarily
-    with open(temp_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    detected = detect_ingredients(temp_path)
-    ingredients_list = ", ".join([f"{i['count']} {i['name']}" for i in detected["ingredients"]])
-
-    # Custom prompt logic
-    if ingredients_list.strip() == "":
-        prompt = """
+def build_prompt(ingredients_list: str) -> str:
+    if not ingredients_list.strip():
+        return """
         Return a result in this exact JSON format:
-
         {
           "title": "Unknown",
           "ingredients": [],
           "steps": []
         }
         """
-    else:
-        prompt = f"""
-        You are a professional recipe generator AI.
+    return f"""
+    You are a professional recipe generator AI.
 
-        Using ONLY these ingredients: {ingredients_list}, generate a creative cooking recipe that involves 
-        actual cooking steps (e.g., roasting, baking, stir-frying, steaming). Avoid salads, fruit mixes, 
-        or any recipe that simply cuts and puts ingredients in a bowl to eat raw.
+    Using ONLY these ingredients: {ingredients_list}, generate a creative cooking recipe that involves
+    actual cooking steps (e.g., roasting, baking, stir-frying, steaming). Avoid salads, fruit mixes,
+    or any recipe that simply cuts and puts ingredients in a bowl to eat raw.
 
-        Output JSON ONLY. No explanation, no markdown, no text besides JSON.
+    Output JSON ONLY. No explanation, no markdown, no text besides JSON.
 
-        JSON structure must be exactly:
+    JSON structure must be exactly:
+    {{
+      "title": "string",
+      "ingredients": ["list of strings"],
+      "steps": ["list of strings"]
+    }}
+    """
 
-        {{
-          "title": "string",
-          "ingredients": ["list of strings"],
-          "steps": ["list of strings"]
-        }}
-        """
+
+@app.get("/")
+async def root():
+    return {"status": "FridgeMate backend is running 🚀"}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.post("/detect_and_generate")
+async def detect_and_generate(file: UploadFile = File(...)):
+    temp_path = f"/tmp/temp_{file.filename}"
+
+    # Save uploaded file temporarily
+    with open(temp_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
 
     try:
+        # Step 1: Detect ingredients with YOLO
+        detected = detect_ingredients(temp_path)
+        ingredients_list = ", ".join(
+            [f"{i['count']} {i['name']}" for i in detected["ingredients"]]
+        )
+
+        # Step 2: Build prompt
+        prompt = build_prompt(ingredients_list)
+
+        # Step 3: Generate recipe via Gemini (with fallback)
         gemini_response = get_gemini_recipe(prompt)
 
-        # Extract generated text
         content = gemini_response["candidates"][0]["content"]["parts"][0]["text"]
-        print("\nGemini raw output:", repr(content))
+        print("Gemini raw output:", repr(content))
 
         content = sanitize_response(content)
 
@@ -118,14 +151,14 @@ async def detect_and_generate(file: UploadFile = File(...)):
             recipe_json = json.loads(content)
         except Exception:
             recipe_json = {
-                "title": "Response Parsing Error",
+                "title": "Parsing Error",
                 "ingredients": [],
-                "steps": [content]
+                "steps": [content],
             }
 
         return {
             "ingredients": detected["ingredients"],
-            "recipe": recipe_json
+            "recipe": recipe_json,
         }
 
     except Exception as e:
@@ -135,5 +168,5 @@ async def detect_and_generate(file: UploadFile = File(...)):
     finally:
         try:
             os.remove(temp_path)
-        except:
+        except Exception:
             pass

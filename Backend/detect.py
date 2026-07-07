@@ -1,37 +1,15 @@
-import os
-os.environ["TORCH_FORCE_WEIGHTS_ONLY_LOAD"] = "0"
-
-import torch
-
-# Monkeypatch torch.load to default weights_only to False for PyTorch 2.6+ compatibility
-original_load = torch.load
-def patched_load(*args, **kwargs):
-    if "weights_only" not in kwargs:
-        kwargs["weights_only"] = False
-    return original_load(*args, **kwargs)
-torch.load = patched_load
-
 from ultralytics import YOLO
 from collections import Counter
-
-
-try:
-    from ultralytics.nn.tasks import DetectionModel
-    if hasattr(torch.serialization, "add_safe_globals"):
-        torch.serialization.add_safe_globals([DetectionModel])
-except Exception as e:
-    print("Could not add PyTorch safe globals:", e)
+import os
 
 _model = None
 
-def load_model(model_path=None):
-    if model_path is None:
-        model_path = "yolov8n.pt"
+def load_model(model_path="yolov8n.pt"):
+    """Load YOLO model. Downloads automatically if not found."""
     if not os.path.exists(model_path):
         print("🔽 YOLOv8n model not found — downloading automatically...")
-        model = YOLO("yolov8n.pt", task="detect")  # YOLO will fetch model
-    else:
-        model = YOLO(model_path)
+    # With torch<=2.5.x pinned in requirements, weights_only defaults to False — no patching needed
+    model = YOLO(model_path)
     return model
 
 def get_cached_model():
@@ -43,7 +21,7 @@ def get_cached_model():
 def detect_ingredients(image_path):
     model = get_cached_model()
     try:
-        results = model(image_path)
+        results = model(image_path, verbose=False)
         res = results[0]
         if not hasattr(res, "boxes") or res.boxes is None or len(res.boxes) == 0:
             return {"ingredients": []}
